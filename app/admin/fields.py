@@ -2,6 +2,9 @@ import json
 from wtforms.fields import TextAreaField
 from shapely.geometry import shape, mapping
 from .widgets import LeafletWidget
+from sqlalchemy import func
+import geoalchemy2
+from .. import db
 
 
 class JSONField(TextAreaField):
@@ -9,7 +12,7 @@ class JSONField(TextAreaField):
         if self.raw_data:
             return self.raw_data[0]
         if self.data:
-            return self.to_json(self.data)
+            return self.data
         return ""
 
     def process_formdata(self, valuelist):
@@ -19,6 +22,7 @@ class JSONField(TextAreaField):
                 self.data = None
                 return
             try:
+                #print self.data
                 self.data = self.from_json(value)
             except ValueError:
                 self.data = None
@@ -34,18 +38,26 @@ class JSONField(TextAreaField):
 class GeoJSONField(JSONField):
     widget = LeafletWidget()
 
-    def __init__(self, label=None, validators=None, geometry_type="GEOMETRY", **kwargs):
+    def __init__(self, label=None, validators=None, geometry_type="GEOMETRY", srid='-1', **kwargs):
         super(GeoJSONField, self).__init__(label, validators, **kwargs)
+        self.web_srid = 4326
+        self.srid = srid
         self.geometry_type = geometry_type.upper()
 
     def _value(self):
+        #print type(self.raw_data)
+        #print type(self.data)
         if self.raw_data:
             return self.raw_data[0]
-        if self.data:
-            self.data = mapping(self.data)
+        #print self.data
+        if type(self.data) is geoalchemy2.elements.WKBElement:
+            self.data = db.session.scalar(func.ST_AsGeoJson(func.ST_Transform(self.data, self.web_srid)))
+        #print self.data
         return super(GeoJSONField, self)._value()
 
     def process_formdata(self, valuelist):
         super(GeoJSONField, self).process_formdata(valuelist)
-        if self.data:
-            self.data = shape(self.data)
+        web_shape = db.session.scalar(func.ST_AsText(func.ST_Transform(func.ST_GeomFromText(shape(self.data).wkt, self.web_srid), self.srid)))
+        print type(self.data), self.data, web_shape
+        if type(self.data):
+            self.data = 'SRID='+str(self.srid)+';'+web_shape
